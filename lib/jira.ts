@@ -33,39 +33,49 @@ export interface AggregatedStats {
   [user: string]: UserStats;
 }
 
+// Use a fixed reporting timezone so "today" and other ranges don't drift based on server location
+const REPORT_TIME_ZONE = process.env.REPORT_TIME_ZONE || 'Asia/Karachi';
+
+function formatDateInTimeZone(date: Date, timeZone: string = REPORT_TIME_ZONE): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+}
+
+// Returns a Date anchored to midnight UTC for the calendar day in the reporting timezone
+function getZonedDateBase(timeZone: string = REPORT_TIME_ZONE): Date {
+  const formatted = formatDateInTimeZone(new Date(), timeZone);
+  const [year, month, day] = formatted.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
 export function getDateRange(period: 'daily' | 'yesterday' | 'weekly' | 'monthly') {
-  const now = new Date();
-  const startDate = new Date();
-  let endDate = new Date();
+  const startDate = getZonedDateBase();
+  const endDate = getZonedDateBase();
 
   switch(period) {
     case 'daily':
-      // Today only - same start and end date
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999);
       break;
     case 'yesterday':
-      // Yesterday only
-      startDate.setDate(startDate.getDate() - 1);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setDate(endDate.getDate() - 1);
-      endDate.setHours(23, 59, 59, 999);
+      startDate.setUTCDate(startDate.getUTCDate() - 1);
+      endDate.setUTCDate(endDate.getUTCDate() - 1);
       break;
     case 'weekly':
-      const day = startDate.getDay();
-      const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
-      startDate.setDate(diff);
-      startDate.setHours(0, 0, 0, 0);
+      const day = startDate.getUTCDay();
+      const diff = startDate.getUTCDate() - day + (day === 0 ? -6 : 1);
+      startDate.setUTCDate(diff);
       break;
     case 'monthly':
-      startDate.setDate(1);
-      startDate.setHours(0, 0, 0, 0);
+      startDate.setUTCDate(1);
       break;
   }
 
   return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0]
+    startDate: formatDateInTimeZone(startDate),
+    endDate: formatDateInTimeZone(endDate)
   };
 }
 
@@ -145,13 +155,9 @@ export function filterWorklogsByDate(
   startDate: string,
   endDate: string
 ): Worklog[] {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  end.setHours(23, 59, 59, 999);
-
   return worklogs.filter(worklog => {
-    const worklogDate = new Date(worklog.started);
-    return worklogDate >= start && worklogDate <= end;
+    const worklogDate = formatDateInTimeZone(new Date(worklog.started));
+    return worklogDate >= startDate && worklogDate <= endDate;
   });
 }
 
@@ -165,7 +171,7 @@ export function aggregateWorklogs(
   worklogs.forEach(worklog => {
     const author = worklog.author.displayName;
     const timeSpent = worklog.timeSpentSeconds;
-    const date = worklog.started.split('T')[0];
+    const date = formatDateInTimeZone(new Date(worklog.started));
 
     if (!userStats[author]) {
       userStats[author] = {

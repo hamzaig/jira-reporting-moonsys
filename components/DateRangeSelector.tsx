@@ -2,6 +2,24 @@
 
 import { useState } from 'react';
 
+const REPORT_TIME_ZONE = process.env.NEXT_PUBLIC_REPORT_TIME_ZONE || 'Asia/Karachi';
+
+const formatDateInTimeZone = (date: Date, timeZone: string = REPORT_TIME_ZONE) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+
+const getZonedDateBase = (offsetDays = 0, timeZone: string = REPORT_TIME_ZONE) => {
+  const formatted = formatDateInTimeZone(new Date(), timeZone);
+  const [year, month, day] = formatted.split('-').map(Number);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return base;
+};
+
 interface DateRangeSelectorProps {
   onDateRangeChange: (startDate: string, endDate: string) => void;
   onPeriodChange?: (period: 'daily' | 'yesterday' | 'weekly' | 'monthly' | 'custom') => void;
@@ -22,46 +40,35 @@ export default function DateRangeSelector({ onDateRangeChange, onPeriodChange }:
       setShowCustom(false);
       onPeriodChange?.(period);
 
-      // Calculate date range based on period
-      const now = new Date();
-      const start = new Date();
-      let end = new Date();
+      const start = getZonedDateBase();
+      const end = getZonedDateBase();
 
       switch(period) {
-        case 'daily':
-          // Today only - use same date for start and end
-          const today = new Date();
-          const year = today.getFullYear();
-          const month = String(today.getMonth() + 1).padStart(2, '0');
-          const dayOfMonth = String(today.getDate()).padStart(2, '0');
-          const todayStr = `${year}-${month}-${dayOfMonth}`;
+        case 'daily': {
+          const todayStr = formatDateInTimeZone(start);
           onDateRangeChange(todayStr, todayStr);
           return;
-        case 'yesterday':
-          // Yesterday only - use same date for start and end
-          const yesterday = new Date();
-          yesterday.setDate(yesterday.getDate() - 1);
-          const yYear = yesterday.getFullYear();
-          const yMonth = String(yesterday.getMonth() + 1).padStart(2, '0');
-          const yDayOfMonth = String(yesterday.getDate()).padStart(2, '0');
-          const yesterdayStr = `${yYear}-${yMonth}-${yDayOfMonth}`;
+        }
+        case 'yesterday': {
+          const yesterday = getZonedDateBase(-1);
+          const yesterdayStr = formatDateInTimeZone(yesterday);
           onDateRangeChange(yesterdayStr, yesterdayStr);
           return;
-        case 'weekly':
-          const day = start.getDay();
-          const diff = start.getDate() - day + (day === 0 ? -6 : 1);
-          start.setDate(diff);
-          start.setHours(0, 0, 0, 0);
+        }
+        case 'weekly': {
+          const day = start.getUTCDay();
+          const diff = start.getUTCDate() - day + (day === 0 ? -6 : 1);
+          start.setUTCDate(diff);
           break;
+        }
         case 'monthly':
-          start.setDate(1);
-          start.setHours(0, 0, 0, 0);
+          start.setUTCDate(1);
           break;
       }
 
       onDateRangeChange(
-        start.toISOString().split('T')[0],
-        end.toISOString().split('T')[0]
+        formatDateInTimeZone(start),
+        formatDateInTimeZone(end)
       );
     }
   };
