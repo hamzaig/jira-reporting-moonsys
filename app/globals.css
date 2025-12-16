@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MoonSys Brand Colors */
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+
+  /* MoonSys Primary Colors */
+  --aqua-blue: #AED9E3;
+  --lavender: #BDBBDF;
+  --peach: #F2CAA1;
+  --pastel-yellow: #F9E389;
+
+  /* Derived colors for better contrast */
+  --aqua-blue-dark: #7DBCC9;
+  --lavender-dark: #9B98C5;
+  --peach-dark: #E5B380;
+  --pastel-yellow-dark: #F5D65F;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .bg-moonsys-aqua {
+    background-color: var(--aqua-blue);
+  }
+
+  .bg-moonsys-lavender {
+    background-color: var(--lavender);
+  }
+
+  .bg-moonsys-peach {
+    background-color: var(--peach);
+  }
+
+  .bg-moonsys-yellow {
+    background-color: var(--pastel-yellow);
+  }
+
+  .text-moonsys-aqua {
+    color: var(--aqua-blue-dark);
+  }
+
+  .text-moonsys-lavender {
+    color: var(--lavender-dark);
+  }
+}
