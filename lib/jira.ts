@@ -16,6 +16,43 @@ export interface Issue {
   };
 }
 
+export interface DetailedTicket {
+  key: string;
+  id: string;
+  fields: {
+    summary: string;
+    status: {
+      name: string;
+      statusCategory: {
+        key: string;
+        name: string;
+      };
+    };
+    assignee: {
+      displayName: string;
+      emailAddress: string;
+      avatarUrls: {
+        '48x48': string;
+      };
+    } | null;
+    project: {
+      key: string;
+      name: string;
+    };
+    priority: {
+      name: string;
+      iconUrl: string;
+    };
+    issuetype: {
+      name: string;
+      iconUrl: string;
+    };
+    created: string;
+    updated: string;
+    resolutiondate: string | null;
+  };
+}
+
 export interface UserStats {
   totalTime: number;
   tickets: {
@@ -102,21 +139,66 @@ export async function getJiraIssues(
     jql = `project = ${projectKey} AND ${jql}`;
   }
 
+  const fields = 'summary,worklog,assignee';
+  
   try {
-    const response = await axios({
-      method: 'post',
-      url: `https://${jiraHost}/rest/api/3/search/jql`,
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      data: {
-        jql: jql,
-        fields: ['summary', 'worklog', 'assignee'],
-        maxResults: 100
+    // Use the new /rest/api/3/search/jql endpoint (required as of May 2025)
+    // Try POST method first (as per Jira API v3 documentation)
+    let response;
+    try {
+      response = await axios({
+        method: 'post',
+        url: `https://${jiraHost}/rest/api/3/search/jql`,
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        data: {
+          jql: jql,
+          fields: fields.split(','),
+          maxResults: 100
+        }
+      });
+    } catch (postError: any) {
+      // If POST fails, try GET method
+      console.log('POST to /rest/api/3/search/jql failed, trying GET...');
+      console.log('POST Error Status:', postError.response?.status);
+      console.log('POST Error Data:', JSON.stringify(postError.response?.data, null, 2));
+      try {
+        response = await axios({
+          method: 'get',
+          url: `https://${jiraHost}/rest/api/3/search/jql`,
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Accept': 'application/json'
+          },
+          params: {
+            jql: jql,
+            fields: fields,
+            maxResults: 100
+          }
+        });
+      } catch (getError: any) {
+        // If GET also fails, try API v2 as fallback
+        console.log('GET to /rest/api/3/search/jql failed, trying API v2...');
+        console.log('GET Error Status:', getError.response?.status);
+        console.log('GET Error Data:', JSON.stringify(getError.response?.data, null, 2));
+        response = await axios({
+          method: 'get',
+          url: `https://${jiraHost}/rest/api/2/search`,
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Accept': 'application/json'
+          },
+          params: {
+            jql: jql,
+            fields: fields,
+            maxResults: 100
+          }
+        });
       }
-    });
+    }
 
     return response.data.issues || [];
   } catch (error) {
@@ -227,4 +309,446 @@ export function mergeUserStats(target: AggregatedStats, source: AggregatedStats)
       target[user].dailyTime[date] += source[user].dailyTime[date];
     });
   });
+}
+
+export interface TicketFilters {
+  assignee?: string;
+  status?: string;
+  statusInclude?: string[];
+  statusExclude?: string[];
+  project?: string;
+  priority?: string;
+  issuetype?: string;
+}
+
+async function fetchJiraTicketsBatch(
+  jiraHost: string,
+  auth: string,
+  jql: string,
+  fields: string[],
+  startAt: number,
+  maxResults: number,
+  nextPageToken?: string
+): Promise<{ issues: DetailedTicket[]; total: number; startAt: number; maxResults: number; nextPageToken?: string; isLast?: boolean }> {
+  // Use the new /rest/api/3/search/jql endpoint (required as of May 2025)
+  // Try POST method first (as per Jira API v3 documentation)
+  let response;
+  try {
+    const postData: any = {
+      jql: jql,
+      fields: fields,
+      maxResults: maxResults
+    };
+    
+    // Use nextPageToken if available (new API v3 format), otherwise use startAt
+    if (nextPageToken) {
+      postData.nextPageToken = nextPageToken;
+    } else {
+      postData.startAt = startAt;
+    }
+    
+    response = await axios({
+      method: 'post',
+      url: `https://${jiraHost}/rest/api/3/search/jql`,
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      data: postData
+    });
+  } catch (postError: any) {
+    // If POST fails, try GET method
+    console.log('POST to /rest/api/3/search/jql failed, trying GET...');
+    console.log('POST Error Status:', postError.response?.status);
+    console.log('POST Error Data:', JSON.stringify(postError.response?.data, null, 2));
+    try {
+      const getParams: any = {
+        jql: jql,
+        fields: fields.join(','),
+        maxResults: maxResults
+      };
+      
+      // Use nextPageToken if available (new API v3 format), otherwise use startAt
+      if (nextPageToken) {
+        getParams.nextPageToken = nextPageToken;
+      } else {
+        getParams.startAt = startAt;
+      }
+      
+      response = await axios({
+        method: 'get',
+        url: `https://${jiraHost}/rest/api/3/search/jql`,
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json'
+        },
+        params: getParams
+      });
+    } catch (getError: any) {
+      // If GET also fails, try API v2 as fallback
+      console.log('GET to /rest/api/3/search/jql failed, trying API v2...');
+      console.log('GET Error Status:', getError.response?.status);
+      console.log('GET Error Data:', JSON.stringify(getError.response?.data, null, 2));
+      response = await axios({
+        method: 'get',
+        url: `https://${jiraHost}/rest/api/2/search`,
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json'
+        },
+        params: {
+          jql: jql,
+          fields: fields.join(','),
+          startAt: startAt,
+          maxResults: maxResults
+        }
+      });
+    }
+  }
+
+  const responseData = response.data;
+  console.log('Jira API Response structure:', {
+    hasIssues: !!responseData.issues,
+    issuesCount: responseData.issues?.length || 0,
+    total: responseData.total,
+    startAt: responseData.startAt,
+    maxResults: responseData.maxResults,
+    nextPageToken: responseData.nextPageToken,
+    isLast: responseData.isLast,
+    keys: Object.keys(responseData)
+  });
+
+  // Handle new API v3 format with nextPageToken
+  const hasNextPageToken = !!responseData.nextPageToken;
+  const isLast = responseData.isLast === true;
+
+  return {
+    issues: responseData.issues || [],
+    total: responseData.total ?? responseData.totalCount ?? (isLast ? (responseData.issues?.length || 0) : Infinity),
+    startAt: responseData.startAt ?? startAt,
+    maxResults: responseData.maxResults ?? maxResults,
+    nextPageToken: responseData.nextPageToken,
+    isLast: isLast
+  };
+}
+
+export async function getAllJiraTickets(
+  jiraHost: string,
+  jiraEmail: string,
+  jiraToken: string,
+  filters?: TicketFilters,
+  startAt: number = 0,
+  maxResults: number = 100,
+  fetchAll: boolean = false
+): Promise<{ issues: DetailedTicket[]; total: number; startAt: number; maxResults: number }> {
+  console.log(`getAllJiraTickets called with fetchAll=${fetchAll}, startAt=${startAt}, maxResults=${maxResults}`);
+  const auth = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+
+  // Build JQL query with filters
+  let jqlParts: string[] = [];
+  
+  if (filters?.assignee) {
+    // Handle unassigned tickets
+    if (filters.assignee === '__UNASSIGNED__') {
+      jqlParts.push('assignee IS EMPTY');
+    } else {
+      jqlParts.push(`assignee = "${filters.assignee}"`);
+    }
+  }
+  
+  // Handle status filters - priority: statusInclude > statusExclude > status (single)
+  if (filters?.statusInclude && filters.statusInclude.length > 0) {
+    // Multiple statuses to include: status IN ("Status1", "Status2", ...)
+    const statusList = filters.statusInclude.map(s => `"${s}"`).join(', ');
+    jqlParts.push(`status IN (${statusList})`);
+  } else if (filters?.statusExclude && filters.statusExclude.length > 0) {
+    // Multiple statuses to exclude: status NOT IN ("Status1", "Status2", ...)
+    const statusList = filters.statusExclude.map(s => `"${s}"`).join(', ');
+    jqlParts.push(`status NOT IN (${statusList})`);
+  } else if (filters?.status) {
+    // Single status filter (backward compatibility)
+    jqlParts.push(`status = "${filters.status}"`);
+  }
+  
+  if (filters?.project) {
+    jqlParts.push(`project = "${filters.project}"`);
+  }
+  
+  if (filters?.priority) {
+    jqlParts.push(`priority = "${filters.priority}"`);
+  }
+  
+  if (filters?.issuetype) {
+    jqlParts.push(`issuetype = "${filters.issuetype}"`);
+  }
+
+  // Build JQL query
+  let jql: string;
+  if (jqlParts.length > 0) {
+    jql = jqlParts.join(' AND ') + ' ORDER BY updated DESC';
+  } else {
+    // Use a query that matches all issues - using a date from year 2000 (practically all issues)
+    jql = 'updated >= "2000-01-01" ORDER BY updated DESC';
+  }
+
+  console.log('JQL Query:', jql);
+  console.log('Request URL:', `https://${jiraHost}/rest/api/3/search/jql`);
+
+  const fields = ['summary', 'status', 'assignee', 'project', 'priority', 'issuetype', 'created', 'updated', 'resolutiondate'];
+  
+  try {
+    if (fetchAll) {
+      // Fetch all tickets by paginating through all results
+      const allIssues: DetailedTicket[] = [];
+      let currentStartAt = 0;
+      let nextPageToken: string | undefined = undefined;
+      const batchSize = 100; // Jira API max is typically 100 per request
+      let total = 0;
+      let hasMore = true;
+      let isUsingNewApiFormat = false;
+
+      console.log('Fetching all tickets with fetchAll=true');
+
+      while (hasMore) {
+        if (nextPageToken) {
+          console.log(`Fetching batch with nextPageToken (new API v3 format)`);
+        } else {
+          console.log(`Fetching batch: startAt=${currentStartAt}, batchSize=${batchSize}`);
+        }
+        
+        const batch = await fetchJiraTicketsBatch(
+          jiraHost,
+          auth,
+          jql,
+          fields,
+          currentStartAt,
+          batchSize,
+          nextPageToken
+        );
+
+        console.log(`Batch received: ${batch.issues.length} issues, isLast=${batch.isLast}, hasNextPageToken=${!!batch.nextPageToken}`);
+
+        allIssues.push(...batch.issues);
+        
+        // Check if using new API v3 format with nextPageToken
+        if (batch.nextPageToken !== undefined) {
+          isUsingNewApiFormat = true;
+          nextPageToken = batch.nextPageToken;
+          hasMore = !batch.isLast;
+          
+          if (batch.isLast) {
+            console.log('Reached last page (isLast=true)');
+            total = allIssues.length;
+          } else {
+            console.log(`More pages available, nextPageToken exists`);
+          }
+        } else {
+          // Using old API format with startAt
+          // Get total from first batch
+          if (total === 0) {
+            total = batch.total;
+            console.log(`Total tickets reported by Jira: ${total}`);
+            
+            // If total is 0 or unreliable, we'll continue fetching until we get fewer results
+            if (total === 0 || total < batch.issues.length) {
+              console.log('Total is 0 or unreliable, will continue fetching until we get fewer results than batch size');
+              total = Infinity; // Set to Infinity so we don't stop early
+            }
+          }
+
+          // If we got fewer results than requested, we've reached the end
+          if (batch.issues.length < batchSize) {
+            console.log(`Reached end: got ${batch.issues.length} results (less than batch size ${batchSize})`);
+            hasMore = false;
+            break;
+          }
+
+          currentStartAt += batchSize;
+
+          // If total is valid and we've fetched all tickets, stop
+          if (total !== Infinity && currentStartAt >= total) {
+            console.log(`Reached reported total: currentStartAt=${currentStartAt}, total=${total}`);
+            hasMore = false;
+            break;
+          }
+        }
+
+        // Safety check to prevent infinite loops (very high limit to support large ticket counts)
+        if (allIssues.length >= 100000) {
+          console.warn('Reached 100000 tickets limit, stopping pagination');
+          hasMore = false;
+          break;
+        }
+      }
+
+      console.log(`Finished fetching all tickets: ${allIssues.length} total`);
+
+      return {
+        issues: allIssues,
+        total: allIssues.length,
+        startAt: 0,
+        maxResults: allIssues.length
+      };
+    } else {
+      // Fetch only the requested page
+      const batch = await fetchJiraTicketsBatch(
+        jiraHost,
+        auth,
+        jql,
+        fields,
+        startAt,
+        maxResults
+      );
+
+      return batch;
+    }
+  } catch (error: any) {
+    console.error('Error fetching tickets:', error);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('Request URL:', error.config?.url);
+      console.error('Request method:', error.config?.method);
+      console.error('Request data:', error.config?.data);
+      console.error('Request params:', error.config?.params);
+    } else {
+      console.error('No response object:', error.message);
+    }
+    throw error;
+  }
+}
+
+export async function getTicketFilterOptions(
+  jiraHost: string,
+  jiraEmail: string,
+  jiraToken: string
+): Promise<{
+  assignees: string[];
+  statuses: string[];
+  projects: Array<{ key: string; name: string }>;
+  priorities: string[];
+  issuetypes: string[];
+}> {
+  const auth = Buffer.from(`${jiraEmail}:${jiraToken}`).toString('base64');
+
+  try {
+    // Fetch a sample of tickets to extract filter options
+    // Use the new /rest/api/3/search/jql endpoint (required as of May 2025)
+    const jql = 'updated >= "2000-01-01" ORDER BY updated DESC';
+    const fields = ['assignee', 'status', 'project', 'priority', 'issuetype'];
+    
+    // Try POST method first (as per Jira API v3 documentation)
+    let response;
+    try {
+      response = await axios({
+        method: 'post',
+        url: `https://${jiraHost}/rest/api/3/search/jql`,
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        data: {
+          jql: jql,
+          fields: fields,
+          maxResults: 1000
+        }
+      });
+    } catch (postError: any) {
+      // If POST fails, try GET method
+      console.log('POST to /rest/api/3/search/jql failed, trying GET...');
+      console.log('POST Error Status:', postError.response?.status);
+      console.log('POST Error Data:', JSON.stringify(postError.response?.data, null, 2));
+      try {
+        response = await axios({
+          method: 'get',
+          url: `https://${jiraHost}/rest/api/3/search/jql`,
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Accept': 'application/json'
+          },
+          params: {
+            jql: jql,
+            fields: fields.join(','),
+            maxResults: 1000
+          }
+        });
+      } catch (getError: any) {
+        // If GET also fails, try API v2 as fallback
+        console.log('GET to /rest/api/3/search/jql failed, trying API v2...');
+        console.log('GET Error Status:', getError.response?.status);
+        console.log('GET Error Data:', JSON.stringify(getError.response?.data, null, 2));
+        response = await axios({
+          method: 'get',
+          url: `https://${jiraHost}/rest/api/2/search`,
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Accept': 'application/json'
+          },
+          params: {
+            jql: jql,
+            fields: fields.join(','),
+            maxResults: 1000
+          }
+        });
+      }
+    }
+
+    const issues = response.data.issues || [];
+    const assignees = new Set<string>();
+    const statuses = new Set<string>();
+    const projects = new Map<string, { key: string; name: string }>();
+    const priorities = new Set<string>();
+    const issuetypes = new Set<string>();
+
+    issues.forEach((issue: DetailedTicket) => {
+      if (issue.fields.assignee) {
+        assignees.add(issue.fields.assignee.displayName);
+      }
+      if (issue.fields.status) {
+        statuses.add(issue.fields.status.name);
+      }
+      if (issue.fields.project) {
+        projects.set(issue.fields.project.key, {
+          key: issue.fields.project.key,
+          name: issue.fields.project.name
+        });
+      }
+      if (issue.fields.priority) {
+        priorities.add(issue.fields.priority.name);
+      }
+      if (issue.fields.issuetype) {
+        issuetypes.add(issue.fields.issuetype.name);
+      }
+    });
+
+    return {
+      assignees: Array.from(assignees).sort(),
+      statuses: Array.from(statuses).sort(),
+      projects: Array.from(projects.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      priorities: Array.from(priorities).sort(),
+      issuetypes: Array.from(issuetypes).sort()
+    };
+  } catch (error: any) {
+    console.error('Error fetching filter options:', error);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('Response headers:', error.response.headers);
+      console.error('Request URL:', error.config?.url);
+      console.error('Request method:', error.config?.method);
+      console.error('Request data:', error.config?.data);
+      console.error('Request params:', error.config?.params);
+    } else {
+      console.error('No response object:', error.message);
+    }
+    return {
+      assignees: [],
+      statuses: [],
+      projects: [],
+      priorities: [],
+      issuetypes: []
+    };
+  }
 }

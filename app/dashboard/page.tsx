@@ -149,12 +149,20 @@ export default function DashboardPage() {
                 Welcome, {user?.email}
               </p>
             </div>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
-            >
-              Logout
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => router.push('/tickets')}
+                className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
+              >
+                All Tickets
+              </button>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -208,6 +216,12 @@ export default function DashboardPage() {
               }`}
             >
               Detailed View
+            </button>
+            <button
+              onClick={() => router.push('/tickets')}
+              className="px-6 py-3 rounded-lg font-medium transition-colors bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 shadow-md"
+            >
+              All Tickets
             </button>
           </div>
         </div>
