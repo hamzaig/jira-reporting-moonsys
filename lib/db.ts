@@ -59,24 +59,42 @@ export interface SlackMessage {
 }
 
 export function saveSlackMessage(message: Omit<SlackMessage, 'id' | 'created_at'>): void {
-  const database = getDatabase();
-  
-  const stmt = database.prepare(`
-    INSERT OR IGNORE INTO slack_messages 
-    (message_id, channel_id, channel_name, user_id, user_name, message_text, message_type, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  stmt.run(
-    message.message_id,
-    message.channel_id,
-    message.channel_name || null,
-    message.user_id,
-    message.user_name || null,
-    message.message_text,
-    message.message_type,
-    message.timestamp
-  );
+  try {
+    console.log('🗄️ Database: Attempting to save message...');
+    const database = getDatabase();
+    console.log('🗄️ Database: Connection established');
+    
+    const stmt = database.prepare(`
+      INSERT OR IGNORE INTO slack_messages 
+      (message_id, channel_id, channel_name, user_id, user_name, message_text, message_type, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const result = stmt.run(
+      message.message_id,
+      message.channel_id,
+      message.channel_name || null,
+      message.user_id,
+      message.user_name || null,
+      message.message_text,
+      message.message_type,
+      message.timestamp
+    );
+    
+    console.log('🗄️ Database: Insert result:', {
+      changes: result.changes,
+      lastInsertRowid: result.lastInsertRowid,
+    });
+    
+    if (result.changes === 0) {
+      console.log('⚠️ Database: Message already exists (duplicate)');
+    } else {
+      console.log('✅ Database: Message saved successfully');
+    }
+  } catch (error) {
+    console.error('❌ Database: Error saving message:', error);
+    throw error;
+  }
 }
 
 export function getMessagesByChannel(

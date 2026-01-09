@@ -27,6 +27,9 @@ export async function GET(request: NextRequest) {
       } else if (type === 'checkout') {
         messages = messages.filter(m => m.message_type === 'checkout');
       }
+    } else if (!type || type === 'all') {
+      // Get all check-in/check-out messages
+      messages = getCheckInOutMessages(startDate || undefined, endDate || undefined);
     } else if (channelId) {
       // Get messages by channel
       messages = getMessagesByChannel(channelId, limit);

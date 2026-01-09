@@ -61,8 +61,15 @@ export async function processSlackMessage(
   channelName?: string,
   userName?: string
 ): Promise<void> {
+  console.log('🔄 Processing Slack message...', {
+    eventType: event.type,
+    hasEvent: !!event.event,
+    eventEventType: event.event?.type,
+  });
+  
   // Handle URL verification challenge
   if (event.type === 'url_verification' && event.challenge) {
+    console.log('✅ URL verification challenge received');
     return;
   }
   
@@ -70,8 +77,22 @@ export async function processSlackMessage(
   if (event.event && event.event.type === 'message') {
     const messageEvent = event.event;
     
+    console.log('💬 Message event details:', {
+      channel: messageEvent.channel,
+      user: messageEvent.user,
+      text: messageEvent.text?.substring(0, 100),
+      ts: messageEvent.ts,
+      subtype: messageEvent.subtype,
+    });
+    
     // Skip bot messages and messages without text
     if (!messageEvent.text || messageEvent.user === undefined) {
+      console.log('⏭️ Skipping: no text or user');
+      return;
+    }
+    
+    if (messageEvent.subtype) {
+      console.log('⏭️ Skipping: has subtype (likely bot or system message)');
       return;
     }
     
@@ -79,8 +100,9 @@ export async function processSlackMessage(
     // You can get channel name from Slack API if needed
     const messageType = parseMessageType(messageEvent.text);
     
-    // Save to database
-    saveSlackMessage({
+    console.log('📝 Parsed message type:', messageType);
+    
+    const messageData = {
       message_id: `${messageEvent.channel}-${messageEvent.ts}`,
       channel_id: messageEvent.channel,
       channel_name: channelName || 'general',
@@ -89,7 +111,24 @@ export async function processSlackMessage(
       message_text: messageEvent.text,
       message_type: messageType,
       timestamp: messageEvent.ts,
+    };
+    
+    console.log('💾 Saving message to database:', {
+      message_id: messageData.message_id,
+      channel: messageData.channel_name,
+      user: messageData.user_name || messageData.user_id,
+      type: messageData.message_type,
     });
+    
+    try {
+      saveSlackMessage(messageData);
+      console.log('✅ Message saved successfully!');
+    } catch (error) {
+      console.error('❌ Error saving message:', error);
+      throw error;
+    }
+  } else {
+    console.log('ℹ️ Not a message event, type:', event.event?.type || event.type);
   }
 }
 

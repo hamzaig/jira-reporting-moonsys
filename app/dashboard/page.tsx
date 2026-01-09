@@ -157,6 +157,18 @@ export default function DashboardPage() {
                 All Tickets
               </button>
               <button
+                onClick={() => router.push('/checkin-checkout')}
+                className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
+              >
+                Check-In/Out
+              </button>
+              <button
+                onClick={() => router.push('/attendance')}
+                className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
+              >
+                Attendance
+              </button>
+              <button
                 onClick={handleLogout}
                 className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
               >
