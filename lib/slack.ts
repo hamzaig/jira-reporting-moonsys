@@ -5,10 +5,11 @@ export interface SlackEvent {
   event?: {
     type: string;
     channel: string;
-    user: string;
-    text: string;
+    user?: string;
+    text?: string;
     ts: string;
     channel_type?: string;
+    subtype?: string;
   };
   challenge?: string;
   token?: string;
@@ -86,7 +87,7 @@ export async function processSlackMessage(
     });
     
     // Skip bot messages and messages without text
-    if (!messageEvent.text || messageEvent.user === undefined) {
+    if (!messageEvent.text || !messageEvent.user) {
       console.log('⏭️ Skipping: no text or user');
       return;
     }
