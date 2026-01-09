@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { processSlackMessage, verifySlackSignature } from '@/lib/slack';
+import { verifySlackSignature } from '@/lib/slack';
 import { WebClient } from '@slack/web-api';
+
+// Lazy import to avoid database initialization on module load
+async function processSlackMessage(event: any, channelName?: string, userName?: string) {
+  const { processSlackMessage: processMessage } = await import('@/lib/slack');
+  return processMessage(event, channelName, userName);
+}
 
 export async function POST(request: NextRequest) {
   console.log('🚀 Slack Events API: Request received');
@@ -47,13 +53,21 @@ export async function POST(request: NextRequest) {
     
     // Handle URL verification challenge FIRST (before signature verification)
     // URL verification doesn't always include signature
+    // This MUST work without database access
     if (event.type === 'url_verification' && event.challenge) {
       console.log('✅ URL verification challenge received');
       console.log('🔑 Challenge value:', event.challenge);
-      const response = NextResponse.json({ challenge: event.challenge });
-      // Add CORS headers for Vercel
-      response.headers.set('Content-Type', 'application/json');
-      return response;
+      
+      // Return challenge immediately - no database needed
+      return new NextResponse(
+        JSON.stringify({ challenge: event.challenge }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
     }
     
     // For other events, verify signature if signing secret is available
@@ -143,11 +157,19 @@ export async function POST(request: NextRequest) {
       
       // Process all messages (not just 'general') - you can change this back if needed
       // For now, let's process all messages to debug
-      try {
-        await processSlackMessage(event, channelName, userName);
-        console.log('✅ Message processed and saved successfully');
-      } catch (err) {
-        console.error('❌ Error processing message:', err);
+      // Only process if channel is 'general'
+      if (channelName === 'general') {
+        try {
+          await processSlackMessage(event, channelName, userName);
+          console.log('✅ Message processed and saved successfully');
+        } catch (err: any) {
+          console.error('❌ Error processing message:', err);
+          // Don't fail the request if database save fails
+          // This allows Slack to know the event was received
+          console.warn('⚠️ Continuing despite save error - Slack will still receive OK response');
+        }
+      } else {
+        console.log(`⏭️ Skipping message from channel: ${channelName} (not 'general')`);
       }
     } else {
       console.log('ℹ️ Event type:', event.event?.type || event.type);
@@ -166,9 +188,20 @@ export async function POST(request: NextRequest) {
 
 // Handle GET requests (for testing)
 export async function GET() {
+  const dbAvailable = await import('@/lib/db').then(m => {
+    try {
+      return m.isDatabaseAvailable();
+    } catch {
+      return false;
+    }
+  }).catch(() => false);
+  
   return NextResponse.json({ 
     message: 'Slack Events API endpoint is active',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.VERCEL ? 'Vercel' : 'Local',
+    databaseAvailable: dbAvailable,
+    note: 'This endpoint expects POST requests from Slack for events'
   });
 }
 
