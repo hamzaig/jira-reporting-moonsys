@@ -15,6 +15,48 @@ export async function POST(request: NextRequest) {
       hasSlackToken: !!slackToken,
     });
     
+    // Get request body as text for signature verification
+    const body = await request.text();
+    const signature = request.headers.get('x-slack-signature') || '';
+    const timestamp = request.headers.get('x-slack-request-timestamp') || '';
+    
+    console.log('📋 Request headers:', {
+      hasSignature: !!signature,
+      hasTimestamp: !!timestamp,
+      contentType: request.headers.get('content-type'),
+    });
+    
+    // Parse event first to check if it's a URL verification challenge
+    let event;
+    try {
+      event = JSON.parse(body);
+    } catch (parseError) {
+      console.error('❌ Failed to parse JSON:', parseError);
+      return NextResponse.json(
+        { error: 'Invalid JSON' },
+        { status: 400 }
+      );
+    }
+    
+    console.log('📦 Event received:', {
+      type: event.type,
+      eventType: event.event?.type,
+      hasEvent: !!event.event,
+      hasChallenge: !!event.challenge,
+    });
+    
+    // Handle URL verification challenge FIRST (before signature verification)
+    // URL verification doesn't always include signature
+    if (event.type === 'url_verification' && event.challenge) {
+      console.log('✅ URL verification challenge received');
+      console.log('🔑 Challenge value:', event.challenge);
+      const response = NextResponse.json({ challenge: event.challenge });
+      // Add CORS headers for Vercel
+      response.headers.set('Content-Type', 'application/json');
+      return response;
+    }
+    
+    // For other events, verify signature if signing secret is available
     if (!signingSecret) {
       console.error('❌ SLACK_SIGNING_SECRET is not set');
       return NextResponse.json(
@@ -23,35 +65,17 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Get request body as text for signature verification
-    const body = await request.text();
-    const signature = request.headers.get('x-slack-signature') || '';
-    const timestamp = request.headers.get('x-slack-request-timestamp') || '';
-    
-    // Verify request is from Slack
-    if (signature && timestamp) {
+    // Verify request is from Slack (skip for URL verification)
+    if (signature && timestamp && event.type !== 'url_verification') {
       const isValid = verifySlackSignature(body, signature, timestamp, signingSecret);
       if (!isValid) {
-        console.error('Invalid Slack signature');
+        console.error('❌ Invalid Slack signature');
         return NextResponse.json(
           { error: 'Invalid signature' },
           { status: 401 }
         );
       }
-    }
-    
-    const event = JSON.parse(body);
-    
-    console.log('📦 Event received:', {
-      type: event.type,
-      eventType: event.event?.type,
-      hasEvent: !!event.event,
-    });
-    
-    // Handle URL verification challenge
-    if (event.type === 'url_verification') {
-      console.log('✅ URL verification challenge');
-      return NextResponse.json({ challenge: event.challenge });
+      console.log('✅ Signature verified');
     }
     
     // Process message events
