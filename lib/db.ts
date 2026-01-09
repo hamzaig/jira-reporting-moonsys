@@ -1,84 +1,114 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import mysql from 'mysql2/promise';
 
-// Check if we're in a serverless environment
-const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
-
-// Database file path - use /tmp in serverless environments
-const getDbPath = () => {
-  if (isServerless) {
-    // In serverless, use /tmp directory (writable but ephemeral)
-    return '/tmp/slack_messages.db';
-  }
-  return path.join(process.cwd(), 'data', 'slack_messages.db');
-};
-
-// Initialize database connection
-let db: Database.Database | null = null;
+// MySQL connection pool
+let pool: mysql.Pool | null = null;
 let dbInitialized = false;
 
-export function getDatabase(): Database.Database {
-  if (!db) {
-    try {
-      const dbPath = getDbPath();
-      
-      // Ensure data directory exists (only for non-serverless)
-      if (!isServerless) {
-        const dataDir = path.dirname(dbPath);
-        if (!fs.existsSync(dataDir)) {
-          fs.mkdirSync(dataDir, { recursive: true });
-        }
-      }
-      
-      console.log('🗄️ Initializing database at:', dbPath);
-      db = new Database(dbPath);
-      initializeDatabase(db);
-      dbInitialized = true;
-      console.log('✅ Database initialized successfully');
-    } catch (error: any) {
-      console.error('❌ Database initialization failed:', error.message);
-      console.error('❌ Error stack:', error.stack);
-      // In serverless environments, this might fail
-      // We'll handle it gracefully
-      throw new Error(`Database initialization failed: ${error.message}`);
+// Get MySQL connection pool
+function getPool(): mysql.Pool {
+  if (!pool) {
+    const connectionString = process.env.DATABASE_URL || process.env.MYSQL_URL;
+    
+    if (!connectionString) {
+      throw new Error('DATABASE_URL or MYSQL_URL environment variable is required');
     }
+
+    // Parse connection string or use direct config
+    let config: mysql.PoolOptions;
+    
+    if (connectionString.startsWith('mysql://')) {
+      // Parse MySQL connection string
+      // Handle special characters in password by decoding URL
+      const url = new URL(connectionString);
+      config = {
+        host: url.hostname,
+        port: parseInt(url.port || '3306'),
+        user: decodeURIComponent(url.username),
+        password: decodeURIComponent(url.password), // Decode password to handle special chars like ^
+        database: url.pathname.slice(1), // Remove leading /
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
+      };
+    } else {
+      // Use environment variables directly
+      // Support both DATABASE_* and MYSQL_* prefixes
+      config = {
+        host: process.env.DATABASE_HOST || process.env.MYSQL_HOST || 'localhost',
+        port: parseInt(process.env.DATABASE_PORT || process.env.MYSQL_PORT || '3306'),
+        user: process.env.DATABASE_USER || process.env.MYSQL_USER || 'root',
+        password: process.env.DATABASE_PASSWORD || process.env.MYSQL_PASSWORD || '',
+        database: process.env.DATABASE_NAME || process.env.MYSQL_DATABASE || 'slack_messages',
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
+      };
+    }
+
+    console.log('🗄️ Initializing MySQL connection pool...');
+    console.log('🔗 Connecting to:', {
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      passwordSet: !!config.password, // Don't log password
+    });
+    pool = mysql.createPool(config);
+    dbInitialized = true;
+    console.log('✅ MySQL connection pool created successfully');
+    
+    // Initialize database schema (async, but don't wait)
+    initializeDatabase().catch(err => {
+      console.error('⚠️ Schema initialization error (non-fatal):', err);
+    });
   }
-  return db;
+  
+  return pool;
 }
 
-export function isDatabaseAvailable(): boolean {
+// Initialize database schema
+async function initializeDatabase(): Promise<void> {
   try {
-    if (!dbInitialized) {
-      getDatabase();
+    const connection = await getPool().getConnection();
+    
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS slack_messages (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        message_id VARCHAR(255) UNIQUE NOT NULL,
+        channel_id VARCHAR(255) NOT NULL,
+        channel_name VARCHAR(255),
+        user_id VARCHAR(255) NOT NULL,
+        user_name VARCHAR(255),
+        message_text TEXT NOT NULL,
+        message_type ENUM('checkin', 'checkout', 'other') DEFAULT 'other',
+        timestamp VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_channel_id (channel_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_timestamp (timestamp),
+        INDEX idx_message_type (message_type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    
+    connection.release();
+    console.log('✅ Database schema initialized');
+  } catch (error: any) {
+    // Check if it's an access denied error
+    if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+      console.error('❌ MySQL Access Denied Error!');
+      console.error('💡 Solution: Grant remote access to MySQL user');
+      console.error('💡 Run this SQL command on your MySQL server:');
+      console.error('   GRANT ALL PRIVILEGES ON slack_messages.* TO \'moonsys\'@\'%\' IDENTIFIED BY \'your_password\';');
+      console.error('   FLUSH PRIVILEGES;');
+      console.error('💡 See MYSQL_ACCESS_FIX.md for detailed instructions');
     }
-    return db !== null;
-  } catch {
-    return false;
+    console.error('❌ Error initializing database schema:', error);
+    throw error;
   }
-}
-
-function initializeDatabase(database: Database.Database) {
-  // Create messages table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS slack_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      message_id TEXT UNIQUE NOT NULL,
-      channel_id TEXT NOT NULL,
-      channel_name TEXT,
-      user_id TEXT NOT NULL,
-      user_name TEXT,
-      message_text TEXT NOT NULL,
-      message_type TEXT, -- 'checkin', 'checkout', 'other'
-      timestamp TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_channel_id ON slack_messages(channel_id);
-    CREATE INDEX IF NOT EXISTS idx_user_id ON slack_messages(user_id);
-    CREATE INDEX IF NOT EXISTS idx_timestamp ON slack_messages(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_message_type ON slack_messages(message_type);
-  `);
 }
 
 export interface SlackMessage {
@@ -94,7 +124,39 @@ export interface SlackMessage {
   created_at?: string;
 }
 
-export function saveSlackMessage(message: Omit<SlackMessage, 'id' | 'created_at'>): void {
+export function isDatabaseAvailable(): boolean {
+  try {
+    if (!dbInitialized) {
+      getPool();
+    }
+    return pool !== null && dbInitialized;
+  } catch (error: any) {
+    console.warn('⚠️ Database not available:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Get total message count (for debugging)
+ */
+export async function getTotalMessageCount(): Promise<number> {
+  try {
+    if (!isDatabaseAvailable()) {
+      return 0;
+    }
+    const [rows] = await getPool().query<mysql.RowDataPacket[]>(
+      'SELECT COUNT(*) as count FROM slack_messages'
+    );
+    return rows[0]?.count || 0;
+  } catch (error: any) {
+    console.error('Error getting message count:', error);
+    return 0;
+  }
+}
+
+export async function saveSlackMessage(
+  message: Omit<SlackMessage, 'id' | 'created_at'>
+): Promise<void> {
   try {
     if (!isDatabaseAvailable()) {
       console.warn('⚠️ Database not available, skipping save');
@@ -102,96 +164,94 @@ export function saveSlackMessage(message: Omit<SlackMessage, 'id' | 'created_at'
     }
     
     console.log('🗄️ Database: Attempting to save message...');
-    const database = getDatabase();
-    console.log('🗄️ Database: Connection established');
+    const connection = await getPool().getConnection();
     
-    const stmt = database.prepare(`
-      INSERT OR IGNORE INTO slack_messages 
-      (message_id, channel_id, channel_name, user_id, user_name, message_text, message_type, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const result = stmt.run(
-      message.message_id,
-      message.channel_id,
-      message.channel_name || null,
-      message.user_id,
-      message.user_name || null,
-      message.message_text,
-      message.message_type,
-      message.timestamp
+    await connection.query(
+      `INSERT INTO slack_messages 
+       (message_id, channel_id, channel_name, user_id, user_name, message_text, message_type, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE message_id = message_id`,
+      [
+        message.message_id,
+        message.channel_id,
+        message.channel_name || null,
+        message.user_id,
+        message.user_name || null,
+        message.message_text,
+        message.message_type,
+        message.timestamp
+      ]
     );
     
-    console.log('🗄️ Database: Insert result:', {
-      changes: result.changes,
-      lastInsertRowid: result.lastInsertRowid,
-    });
-    
-    if (result.changes === 0) {
-      console.log('⚠️ Database: Message already exists (duplicate)');
-    } else {
-      console.log('✅ Database: Message saved successfully');
-    }
+    connection.release();
+    console.log('✅ Database: Message saved successfully');
   } catch (error: any) {
     console.error('❌ Database: Error saving message:', error);
-    // In serverless environments, database might not be available
-    // Log the error but don't crash - this allows URL verification to work
-    if (isServerless) {
-      console.warn('⚠️ Running on serverless - database operations may be limited');
-      console.warn('💡 Consider using a cloud database (PostgreSQL, MongoDB) for production');
-    }
     // Don't throw - allow the request to complete
   }
 }
 
-export function getMessagesByChannel(
+export async function getMessagesByChannel(
   channelId: string,
   limit: number = 100
-): SlackMessage[] {
+): Promise<SlackMessage[]> {
   try {
-    const database = getDatabase();
+    if (!isDatabaseAvailable()) {
+      return [];
+    }
     
-    const stmt = database.prepare(`
-      SELECT * FROM slack_messages 
-      WHERE channel_id = ? 
-      ORDER BY timestamp DESC 
-      LIMIT ?
-    `);
+    const connection = await getPool().getConnection();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT * FROM slack_messages 
+       WHERE channel_id = ? 
+       ORDER BY CAST(timestamp AS DECIMAL(20, 10)) DESC 
+       LIMIT ?`,
+      [channelId, limit]
+    );
     
-    return stmt.all(channelId, limit) as SlackMessage[];
+    connection.release();
+    return rows as SlackMessage[];
   } catch (error: any) {
     console.error('❌ Database: Error fetching messages by channel:', error);
     return [];
   }
 }
 
-export function getMessagesByUser(
+export async function getMessagesByUser(
   userId: string,
   limit: number = 100
-): SlackMessage[] {
+): Promise<SlackMessage[]> {
   try {
-    const database = getDatabase();
+    if (!isDatabaseAvailable()) {
+      return [];
+    }
     
-    const stmt = database.prepare(`
-      SELECT * FROM slack_messages 
-      WHERE user_id = ? 
-      ORDER BY timestamp DESC 
-      LIMIT ?
-    `);
+    const connection = await getPool().getConnection();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT * FROM slack_messages 
+       WHERE user_id = ? 
+       ORDER BY CAST(timestamp AS DECIMAL(20, 10)) DESC 
+       LIMIT ?`,
+      [userId, limit]
+    );
     
-    return stmt.all(userId, limit) as SlackMessage[];
+    connection.release();
+    return rows as SlackMessage[];
   } catch (error: any) {
     console.error('❌ Database: Error fetching messages by user:', error);
     return [];
   }
 }
 
-export function getCheckInOutMessages(
+export async function getCheckInOutMessages(
   startDate?: string,
   endDate?: string
-): SlackMessage[] {
+): Promise<SlackMessage[]> {
   try {
-    const database = getDatabase();
+    if (!isDatabaseAvailable()) {
+      console.warn('⚠️ Database not available for getCheckInOutMessages');
+      return [];
+    }
     
     let query = `
       SELECT * FROM slack_messages 
@@ -200,31 +260,57 @@ export function getCheckInOutMessages(
     
     const params: any[] = [];
     
-    if (startDate) {
-      query += ' AND timestamp >= ?';
-      params.push(startDate);
+    // For date filtering, convert date to timestamp
+    if (startDate || endDate) {
+      if (startDate) {
+        const startTimestamp = new Date(startDate + 'T00:00:00+05:00').getTime() / 1000;
+        query += ' AND CAST(timestamp AS DECIMAL(20, 10)) >= ?';
+        params.push(startTimestamp.toString());
+      }
+      
+      if (endDate) {
+        const endTimestamp = new Date(endDate + 'T23:59:59+05:00').getTime() / 1000;
+        query += ' AND CAST(timestamp AS DECIMAL(20, 10)) <= ?';
+        params.push(endTimestamp.toString());
+      }
     }
   
-    if (endDate) {
-      query += ' AND timestamp <= ?';
-      params.push(endDate);
+    query += ' ORDER BY CAST(timestamp AS DECIMAL(20, 10)) DESC';
+  
+    console.log('🔍 Query:', query);
+    console.log('📋 Params:', params);
+    
+    const connection = await getPool().getConnection();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(query, params);
+    connection.release();
+    
+    const results = rows as SlackMessage[];
+    console.log('📊 Found', results.length, 'messages in database');
+    
+    // Verify results
+    if (results.length > 0) {
+      console.log('✅ Sample message:', {
+        id: results[0].id,
+        user: results[0].user_name,
+        type: results[0].message_type,
+        timestamp: results[0].timestamp
+      });
     }
-  
-    query += ' ORDER BY timestamp DESC';
-  
-    const stmt = database.prepare(query);
-    return stmt.all(...params) as SlackMessage[];
+    
+    return results;
   } catch (error: any) {
     console.error('❌ Database: Error fetching check-in/out messages:', error);
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error stack:', error.stack);
     return [];
   }
 }
 
 // Close database connection (useful for cleanup)
-export function closeDatabase(): void {
-  if (db) {
-    db.close();
-    db = null;
+export async function closeDatabase(): Promise<void> {
+  if (pool) {
+    await pool.end();
+    pool = null;
+    dbInitialized = false;
   }
 }
-

@@ -41,7 +41,19 @@ export default function CheckInCheckOutPage() {
     if (user) {
       fetchMessages();
     }
-  }, [filterType, selectedDate]);
+  }, [filterType, selectedDate, user]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!user) return;
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Auto-refreshing messages...');
+      fetchMessages();
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [user, filterType, selectedDate]);
 
   const fetchMessages = async () => {
     setLoading(true);
@@ -49,15 +61,37 @@ export default function CheckInCheckOutPage() {
 
     try {
       let url = `/api/slack/messages`;
+      const params = new URLSearchParams();
+      
       if (filterType !== 'all') {
-        url += `?type=${filterType}`;
+        params.append('type', filterType);
       }
       if (selectedDate) {
-        url += filterType === 'all' ? `?startDate=${selectedDate}&endDate=${selectedDate}` : `&startDate=${selectedDate}&endDate=${selectedDate}`;
+        params.append('startDate', selectedDate);
+        params.append('endDate', selectedDate);
       }
       
-      const response = await fetch(url);
+      if (params.toString()) {
+        url += `?${params.toString()}`;
+      }
+      
+      console.log('📡 Fetching messages from:', url);
+      
+      // Add cache-busting to prevent stale data
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        }
+      });
+      
       const result = await response.json();
+
+      console.log('📥 Received response:', {
+        success: result.success,
+        count: result.count,
+        messagesCount: result.messages?.length || 0
+      });
 
       if (!response.ok || result.error) {
         throw new Error(result.error || 'Failed to fetch messages');
@@ -68,9 +102,10 @@ export default function CheckInCheckOutPage() {
         parseFloat(b.timestamp) - parseFloat(a.timestamp)
       );
       
+      console.log('✅ Setting', sortedMessages.length, 'messages');
       setMessages(sortedMessages);
     } catch (err) {
-      console.error('Fetch error:', err);
+      console.error('❌ Fetch error:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
@@ -218,7 +253,13 @@ export default function CheckInCheckOutPage() {
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-moonsys-aqua focus:border-transparent"
               />
             </div>
-            <div>
+            <div className="flex gap-2">
+              <button
+                onClick={fetchMessages}
+                className="px-4 py-2 bg-moonsys-aqua hover:bg-moonsys-aqua-dark text-white rounded-lg transition-colors font-medium"
+              >
+                🔄 Refresh
+              </button>
               <button
                 onClick={() => {
                   setSelectedDate('');

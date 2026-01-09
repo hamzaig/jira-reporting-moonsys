@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     
-    const summary = getAttendanceSummary(
+    const summary = await getAttendanceSummary(
       startDate || undefined,
       endDate || undefined
     );

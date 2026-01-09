@@ -66,12 +66,21 @@ function calculateHours(checkInTs: string, checkOutTs: string): number {
 /**
  * Get attendance records for a date range
  */
-export function getAttendanceRecords(
+export async function getAttendanceRecords(
   startDate?: string,
   endDate?: string
-): UserAttendance[] {
+): Promise<UserAttendance[]> {
+  console.log('📅 Getting attendance records for:', { startDate, endDate });
+  
   // Get all check-in/check-out messages
-  const messages = getCheckInOutMessages(startDate, endDate);
+  const messages = await getCheckInOutMessages(startDate, endDate);
+  
+  console.log('📊 Total messages retrieved:', messages.length);
+  
+  if (messages.length === 0) {
+    console.warn('⚠️ No messages found for attendance calculation');
+    return [];
+  }
   
   // Group messages by user and date
   const userDateMap = new Map<string, Map<string, { checkins: SlackMessage[], checkouts: SlackMessage[] }>>();
@@ -221,10 +230,10 @@ export function getAttendanceRecords(
 /**
  * Get attendance summary for all users
  */
-export function getAttendanceSummary(
+export async function getAttendanceSummary(
   startDate?: string,
   endDate?: string
-): {
+): Promise<{
   total_users: number;
   total_days_tracked: number;
   total_full_days: number;
@@ -232,8 +241,8 @@ export function getAttendanceSummary(
   total_days_off: number;
   total_incomplete_days: number;
   users: UserAttendance[];
-} {
-  const users = getAttendanceRecords(startDate, endDate);
+}> {
+  const users = await getAttendanceRecords(startDate, endDate);
   
   const summary = {
     total_users: users.length,

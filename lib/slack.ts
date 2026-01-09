@@ -122,7 +122,7 @@ export async function processSlackMessage(
     });
     
     try {
-      saveSlackMessage(messageData);
+      await saveSlackMessage(messageData);
       console.log('✅ Message saved successfully!');
     } catch (error) {
       console.error('❌ Error saving message:', error);

@@ -61,7 +61,19 @@ export default function AttendancePage() {
     if (user) {
       fetchAttendance();
     }
-  }, [startDate, endDate]);
+  }, [startDate, endDate, user]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!user) return;
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Auto-refreshing attendance...');
+      fetchAttendance();
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [user, startDate, endDate]);
 
   const fetchAttendance = async () => {
     setLoading(true);
@@ -76,16 +88,32 @@ export default function AttendancePage() {
         url += `?${params.toString()}`;
       }
 
-      const response = await fetch(url);
+      console.log('📡 Fetching attendance from:', url);
+
+      // Add cache-busting to prevent stale data
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        }
+      });
+      
       const result = await response.json();
+
+      console.log('📥 Received attendance response:', {
+        success: result.success,
+        total_users: result.total_users,
+        total_days_tracked: result.total_days_tracked
+      });
 
       if (!response.ok || result.error) {
         throw new Error(result.error || 'Failed to fetch attendance');
       }
 
+      console.log('✅ Setting attendance data');
       setData(result);
     } catch (err) {
-      console.error('Fetch error:', err);
+      console.error('❌ Fetch error:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
@@ -245,14 +273,20 @@ export default function AttendancePage() {
                 ))}
               </select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
+              <button
+                onClick={fetchAttendance}
+                className="flex-1 px-4 py-2 bg-moonsys-aqua hover:bg-moonsys-aqua-dark text-white rounded-lg transition-colors font-medium"
+              >
+                🔄 Refresh
+              </button>
               <button
                 onClick={() => {
                   setStartDate(firstDayOfMonth);
                   setEndDate(today);
                   setSelectedUser('all');
                 }}
-                className="w-full px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors font-medium"
+                className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors font-medium"
               >
                 Reset Filters
               </button>

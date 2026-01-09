@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCheckInOutMessages, getDatabase } from '@/lib/db';
+import { getCheckInOutMessages, getTotalMessageCount, isDatabaseAvailable } from '@/lib/db';
 
 export async function GET() {
   try {
     console.log('🧪 Test endpoint called');
     
-    // Test database connection
-    const db = getDatabase();
-    console.log('✅ Database connection successful');
+    // Check database availability
+    const dbAvailable = isDatabaseAvailable();
+    console.log('📊 Database available:', dbAvailable);
     
-    // Get all messages
-    const messages = getCheckInOutMessages();
-    console.log('📊 Total messages in database:', messages.length);
+    // Get total message count
+    const totalCount = await getTotalMessageCount();
+    console.log('📊 Total messages in database:', totalCount);
+    
+    // Get all check-in/check-out messages
+    const messages = await getCheckInOutMessages();
+    console.log('📊 Check-in/out messages:', messages.length);
     
     // Get recent messages
     const recentMessages = messages.slice(0, 10);
     
     return NextResponse.json({
       success: true,
-      databaseConnected: true,
-      totalMessages: messages.length,
+      databaseAvailable: dbAvailable,
+      totalMessages: totalCount,
+      checkInOutMessages: messages.length,
       recentMessages: recentMessages,
       timestamp: new Date().toISOString(),
     });
@@ -29,7 +34,8 @@ export async function GET() {
       {
         success: false,
         error: error.message,
-        stack: error.stack,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
       },
       { status: 500 }
     );

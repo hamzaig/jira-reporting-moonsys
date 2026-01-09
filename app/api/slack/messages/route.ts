@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
     if (type === 'checkin' || type === 'checkout') {
       // Get check-in/check-out messages
-      messages = getCheckInOutMessages(startDate || undefined, endDate || undefined);
+      messages = await getCheckInOutMessages(startDate || undefined, endDate || undefined);
       
       // Filter by type if specified
       if (type === 'checkin') {
@@ -29,30 +29,46 @@ export async function GET(request: NextRequest) {
       }
     } else if (!type || type === 'all') {
       // Get all check-in/check-out messages
-      messages = getCheckInOutMessages(startDate || undefined, endDate || undefined);
+      messages = await getCheckInOutMessages(startDate || undefined, endDate || undefined);
     } else if (channelId) {
       // Get messages by channel
-      messages = getMessagesByChannel(channelId, limit);
+      messages = await getMessagesByChannel(channelId, limit);
     } else if (userId) {
       // Get messages by user
-      messages = getMessagesByUser(userId, limit);
+      messages = await getMessagesByUser(userId, limit);
     } else {
       // Get all check-in/check-out messages by default
-      messages = getCheckInOutMessages(startDate || undefined, endDate || undefined);
+      messages = await getCheckInOutMessages(startDate || undefined, endDate || undefined);
     }
 
-    // Apply date filters if provided
+    // Additional date filtering (in case database query didn't filter properly)
     if (startDate || endDate) {
       messages = messages.filter(m => {
-        const messageDate = new Date(parseFloat(m.timestamp) * 1000).toISOString().split('T')[0];
-        if (startDate && messageDate < startDate) return false;
-        if (endDate && messageDate > endDate) return false;
-        return true;
+        try {
+          // Convert timestamp to date in Karachi timezone
+          const timestamp = parseFloat(m.timestamp) * 1000;
+          const date = new Date(timestamp);
+          const karachiDate = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Karachi',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(date);
+          
+          if (startDate && karachiDate < startDate) return false;
+          if (endDate && karachiDate > endDate) return false;
+          return true;
+        } catch (err) {
+          console.error('Error filtering message by date:', err);
+          return true; // Include if date parsing fails
+        }
       });
     }
 
     // Limit results
     messages = messages.slice(0, limit);
+
+    console.log('📤 Returning', messages.length, 'messages');
 
     return NextResponse.json({
       success: true,
