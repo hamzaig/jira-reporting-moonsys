@@ -31,9 +31,16 @@ export default function UserStatsCard({ userName, stats }: UserStatsCardProps) {
             <div key={key} className="bg-gray-50 dark:bg-gray-700 rounded-md p-3">
               <div className="flex justify-between items-start mb-1">
                 <span className="font-medium text-blue-600 dark:text-blue-400">{key}</span>
-                <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                  {formatSeconds(ticket.time)}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    {formatSeconds(ticket.time)}
+                  </span>
+                  {ticket.estimatedTime && ticket.estimatedTime > 0 && (
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Est: {formatSeconds(ticket.estimatedTime)}
+                    </span>
+                  )}
+                </div>
               </div>
               <p className="text-sm text-gray-600 dark:text-gray-400">{ticket.summary}</p>
             </div>

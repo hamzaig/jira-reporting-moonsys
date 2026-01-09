@@ -47,12 +47,13 @@ export async function GET(request: NextRequest) {
     for (const issue of issues) {
       const issueKey = issue.key;
       const issueSummary = issue.fields.summary;
+      const estimatedTime = issue.fields.timeoriginalestimate || null;
 
       const worklogs = await getWorklogsForIssue(issueKey, jiraHost, jiraEmail, jiraToken);
       const filteredWorklogs = filterWorklogsByDate(worklogs, startDate, endDate);
 
       if (filteredWorklogs.length > 0) {
-        const issueStats = aggregateWorklogs(filteredWorklogs, issueKey, issueSummary);
+        const issueStats = aggregateWorklogs(filteredWorklogs, issueKey, issueSummary, estimatedTime);
         mergeUserStats(allUserStats, issueStats);
       }
     }

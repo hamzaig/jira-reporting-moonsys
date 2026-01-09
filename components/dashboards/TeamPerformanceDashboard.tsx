@@ -8,12 +8,20 @@ interface TeamPerformanceDashboardProps {
 }
 
 export default function TeamPerformanceDashboard({ userStats }: TeamPerformanceDashboardProps) {
-  const users = Object.entries(userStats).map(([name, stats]) => ({
-    name,
-    totalTime: stats.totalTime,
-    ticketCount: Object.keys(stats.tickets).length,
-    avgTimePerTicket: stats.totalTime / Object.keys(stats.tickets).length,
-  }));
+  const users = Object.entries(userStats).map(([name, stats]) => {
+    // Calculate total estimated time for all tickets this user worked on
+    const totalEstimatedTime = Object.values(stats.tickets).reduce((sum, ticket) => {
+      return sum + (ticket.estimatedTime || 0);
+    }, 0);
+    
+    return {
+      name,
+      totalTime: stats.totalTime,
+      ticketCount: Object.keys(stats.tickets).length,
+      avgTimePerTicket: stats.totalTime / Object.keys(stats.tickets).length,
+      totalEstimatedTime: totalEstimatedTime,
+    };
+  });
 
   const sortedByTime = [...users].sort((a, b) => b.totalTime - a.totalTime);
   const sortedByTickets = [...users].sort((a, b) => b.ticketCount - a.ticketCount);
@@ -59,6 +67,7 @@ export default function TeamPerformanceDashboard({ userStats }: TeamPerformanceD
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Name</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Time Logged</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Tickets</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Estimated Time</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Avg/Ticket</th>
               </tr>
             </thead>
@@ -81,6 +90,9 @@ export default function TeamPerformanceDashboard({ userStats }: TeamPerformanceD
                   <td className="py-3 px-4 font-medium text-gray-900 dark:text-white">{user.name}</td>
                   <td className="py-3 px-4 text-gray-700 dark:text-gray-300">{formatSeconds(user.totalTime)}</td>
                   <td className="py-3 px-4 text-gray-700 dark:text-gray-300">{user.ticketCount}</td>
+                  <td className="py-3 px-4 text-gray-700 dark:text-gray-300">
+                    {user.totalEstimatedTime > 0 ? formatSeconds(user.totalEstimatedTime) : '-'}
+                  </td>
                   <td className="py-3 px-4 text-gray-700 dark:text-gray-300">
                     {formatSeconds(user.avgTimePerTicket)}
                   </td>

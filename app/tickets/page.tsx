@@ -40,12 +40,12 @@ export default function TicketsPage() {
     assignee: '',
     status: '',
     statusInclude: [],
-    statusExclude: [],
+    statusExclude: ['Done'], // Exclude "Done" status by default
     project: '',
     priority: '',
     issuetype: ''
   });
-  const [statusFilterMode, setStatusFilterMode] = useState<'include' | 'exclude'>('include');
+  const [statusFilterMode, setStatusFilterMode] = useState<'include' | 'exclude'>('exclude');
   const [total, setTotal] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState('Loading tickets...');
@@ -75,6 +75,19 @@ export default function TicketsPage() {
       if (response.ok) {
         const options = await response.json();
         setFilterOptions(options);
+        
+        // Check if "Done" status exists and add it to exclude list if not already there
+        if (options.statuses && options.statuses.includes('Done')) {
+          setFilters(prev => {
+            if (!prev.statusExclude.includes('Done')) {
+              return {
+                ...prev,
+                statusExclude: [...prev.statusExclude, 'Done']
+              };
+            }
+            return prev;
+          });
+        }
       }
     } catch (err) {
       console.error('Error fetching filter options:', err);
@@ -198,6 +211,19 @@ export default function TicketsPage() {
       month: 'short',
       day: 'numeric'
     });
+  };
+
+  const formatTime = (seconds: number | null | undefined): string => {
+    if (!seconds || seconds === 0) return '-';
+    
+    const hours = Math.floor(seconds / 3600);
+    const days = Math.floor(hours / 8); // Assuming 8 hours per day
+    const remainingHours = hours % 8;
+    
+    if (days > 0) {
+      return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+    }
+    return `${hours}h`;
   };
 
   const getStatusColor = (status: string) => {
@@ -544,6 +570,9 @@ export default function TicketsPage() {
                       Type
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      Estimation
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                       Updated
                     </th>
                   </tr>
@@ -598,6 +627,27 @@ export default function TicketsPage() {
                         <span className="text-sm text-gray-900 dark:text-white">
                           {ticket.fields.issuetype.name}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900 dark:text-white">
+                          <div className="flex flex-col">
+                            {ticket.fields.timeoriginalestimate && (
+                              <div className="text-xs">
+                                <span className="text-gray-500 dark:text-gray-400">Est:</span>{' '}
+                                <span className="font-medium">{formatTime(ticket.fields.timeoriginalestimate)}</span>
+                              </div>
+                            )}
+                            {ticket.fields.timespent && (
+                              <div className="text-xs mt-1">
+                                <span className="text-gray-500 dark:text-gray-400">Spent:</span>{' '}
+                                <span className="font-medium">{formatTime(ticket.fields.timespent)}</span>
+                              </div>
+                            )}
+                            {!ticket.fields.timeoriginalestimate && !ticket.fields.timespent && (
+                              <span className="text-gray-400 dark:text-gray-500">-</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                         {formatDate(ticket.fields.updated)}

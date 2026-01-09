@@ -13,6 +13,7 @@ export interface Issue {
   key: string;
   fields: {
     summary: string;
+    timeoriginalestimate?: number | null;
   };
 }
 
@@ -50,6 +51,9 @@ export interface DetailedTicket {
     created: string;
     updated: string;
     resolutiondate: string | null;
+    timeoriginalestimate?: number | null;
+    timeestimate?: number | null;
+    timespent?: number | null;
   };
 }
 
@@ -59,6 +63,7 @@ export interface UserStats {
     [key: string]: {
       summary: string;
       time: number;
+      estimatedTime?: number | null;
     };
   };
   dailyTime: {
@@ -139,7 +144,7 @@ export async function getJiraIssues(
     jql = `project = ${projectKey} AND ${jql}`;
   }
 
-  const fields = 'summary,worklog,assignee';
+  const fields = 'summary,worklog,assignee,timeoriginalestimate';
   
   try {
     // Use the new /rest/api/3/search/jql endpoint (required as of May 2025)
@@ -246,7 +251,8 @@ export function filterWorklogsByDate(
 export function aggregateWorklogs(
   worklogs: Worklog[],
   issueKey: string,
-  issueSummary: string
+  issueSummary: string,
+  estimatedTime?: number | null
 ): AggregatedStats {
   const userStats: AggregatedStats = {};
 
@@ -268,7 +274,8 @@ export function aggregateWorklogs(
     if (!userStats[author].tickets[issueKey]) {
       userStats[author].tickets[issueKey] = {
         summary: issueSummary,
-        time: 0
+        time: 0,
+        estimatedTime: estimatedTime || null
       };
     }
     userStats[author].tickets[issueKey].time += timeSpent;
@@ -299,6 +306,10 @@ export function mergeUserStats(target: AggregatedStats, source: AggregatedStats)
         target[user].tickets[ticket] = source[user].tickets[ticket];
       } else {
         target[user].tickets[ticket].time += source[user].tickets[ticket].time;
+        // Preserve estimated time if not already set
+        if (!target[user].tickets[ticket].estimatedTime && source[user].tickets[ticket].estimatedTime) {
+          target[user].tickets[ticket].estimatedTime = source[user].tickets[ticket].estimatedTime;
+        }
       }
     });
 
@@ -495,7 +506,7 @@ export async function getAllJiraTickets(
   console.log('JQL Query:', jql);
   console.log('Request URL:', `https://${jiraHost}/rest/api/3/search/jql`);
 
-  const fields = ['summary', 'status', 'assignee', 'project', 'priority', 'issuetype', 'created', 'updated', 'resolutiondate'];
+  const fields = ['summary', 'status', 'assignee', 'project', 'priority', 'issuetype', 'created', 'updated', 'resolutiondate', 'timeoriginalestimate', 'timeestimate', 'timespent'];
   
   try {
     if (fetchAll) {

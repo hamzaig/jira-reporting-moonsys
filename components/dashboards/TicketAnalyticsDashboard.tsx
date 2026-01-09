@@ -9,7 +9,7 @@ interface TicketAnalyticsDashboardProps {
 
 export default function TicketAnalyticsDashboard({ userStats }: TicketAnalyticsDashboardProps) {
   // Aggregate all tickets
-  const allTickets: { [key: string]: { summary: string; totalTime: number; users: string[] } } = {};
+  const allTickets: { [key: string]: { summary: string; totalTime: number; estimatedTime: number | null; users: string[] } } = {};
 
   Object.entries(userStats).forEach(([userName, stats]) => {
     Object.entries(stats.tickets).forEach(([ticketKey, ticketData]) => {
@@ -17,10 +17,15 @@ export default function TicketAnalyticsDashboard({ userStats }: TicketAnalyticsD
         allTickets[ticketKey] = {
           summary: ticketData.summary,
           totalTime: 0,
+          estimatedTime: ticketData.estimatedTime || null,
           users: [],
         };
       }
       allTickets[ticketKey].totalTime += ticketData.time;
+      // Preserve estimated time if not already set
+      if (!allTickets[ticketKey].estimatedTime && ticketData.estimatedTime) {
+        allTickets[ticketKey].estimatedTime = ticketData.estimatedTime;
+      }
       allTickets[ticketKey].users.push(userName);
     });
   });
@@ -81,6 +86,7 @@ export default function TicketAnalyticsDashboard({ userStats }: TicketAnalyticsD
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Ticket</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Summary</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Time Spent</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Estimated Time</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Contributors</th>
               </tr>
             </thead>
@@ -100,6 +106,9 @@ export default function TicketAnalyticsDashboard({ userStats }: TicketAnalyticsD
                   </td>
                   <td className="py-3 px-4 font-medium text-gray-900 dark:text-white">
                     {formatSeconds(data.totalTime)}
+                  </td>
+                  <td className="py-3 px-4 text-gray-700 dark:text-gray-300">
+                    {data.estimatedTime && data.estimatedTime > 0 ? formatSeconds(data.estimatedTime) : '-'}
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex -space-x-2">
