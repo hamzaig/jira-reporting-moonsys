@@ -243,6 +243,153 @@ export async function getMessagesByUser(
   }
 }
 
+/**
+ * Get user_id for a given user_name (to match existing users)
+ */
+async function getUserIdByName(user_name: string): Promise<string | null> {
+  try {
+    if (!isDatabaseAvailable()) {
+      return null;
+    }
+    
+    const connection = await getPool().getConnection();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT user_id FROM slack_messages 
+       WHERE user_name = ? 
+       LIMIT 1`,
+      [user_name]
+    );
+    
+    connection.release();
+    
+    if (rows.length > 0 && rows[0].user_id) {
+      return rows[0].user_id;
+    }
+    
+    return null;
+  } catch (error: any) {
+    console.error('❌ Database: Error fetching user_id by name:', error);
+    return null;
+  }
+}
+
+/**
+ * Save a manual check-in/check-out entry
+ */
+export async function saveManualEntry(
+  user_name: string,
+  message_type: 'checkin' | 'checkout',
+  timestamp: string,
+  message_text?: string
+): Promise<void> {
+  try {
+    if (!isDatabaseAvailable()) {
+      console.warn('⚠️ Database not available, skipping save');
+      return;
+    }
+    
+    console.log('🗄️ Database: Attempting to save manual entry...');
+    const connection = await getPool().getConnection();
+    
+    // First, try to find existing user_id for this user_name
+    let user_id = await getUserIdByName(user_name);
+    
+    // If no existing user found, generate a new user_id
+    if (!user_id) {
+      user_id = `manual-${user_name.toLowerCase().replace(/\s+/g, '-')}`;
+      console.log('📝 No existing user found, generating new user_id:', user_id);
+    } else {
+      console.log('✅ Found existing user_id:', user_id, 'for user:', user_name);
+    }
+    
+    // Generate unique message_id for manual entries
+    const message_id = `manual-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    
+    await connection.query(
+      `INSERT INTO slack_messages 
+       (message_id, channel_id, channel_name, user_id, user_name, message_text, message_type, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        message_id,
+        'manual', // Special channel_id for manual entries
+        'Manual Entry',
+        user_id, // Use existing user_id or generated one
+        user_name,
+        message_text || `${message_type === 'checkin' ? 'Check-In' : 'Check-Out'} (Manual Entry)`,
+        message_type,
+        timestamp
+      ]
+    );
+    
+    connection.release();
+    console.log('✅ Database: Manual entry saved successfully');
+  } catch (error: any) {
+    console.error('❌ Database: Error saving manual entry:', error);
+    throw error; // Throw for API to handle
+  }
+}
+
+/**
+ * Delete a message entry by ID
+ */
+export async function deleteMessage(id: number): Promise<boolean> {
+  try {
+    if (!isDatabaseAvailable()) {
+      console.warn('⚠️ Database not available, cannot delete');
+      return false;
+    }
+    
+    console.log('🗄️ Database: Attempting to delete message with ID:', id);
+    const connection = await getPool().getConnection();
+    
+    const [result] = await connection.query<mysql.ResultSetHeader>(
+      'DELETE FROM slack_messages WHERE id = ?',
+      [id]
+    );
+    
+    connection.release();
+    
+    if (result.affectedRows > 0) {
+      console.log('✅ Database: Message deleted successfully');
+      return true;
+    } else {
+      console.warn('⚠️ Database: No message found with ID:', id);
+      return false;
+    }
+  } catch (error: any) {
+    console.error('❌ Database: Error deleting message:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get list of unique users from messages
+ */
+export async function getUniqueUsers(): Promise<Array<{ user_id: string; user_name: string | null }>> {
+  try {
+    if (!isDatabaseAvailable()) {
+      return [];
+    }
+    
+    const connection = await getPool().getConnection();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT user_id, user_name 
+       FROM slack_messages 
+       WHERE user_name IS NOT NULL 
+       ORDER BY user_name ASC`
+    );
+    
+    connection.release();
+    return rows.map(row => ({
+      user_id: row.user_id,
+      user_name: row.user_name
+    }));
+  } catch (error: any) {
+    console.error('❌ Database: Error fetching unique users:', error);
+    return [];
+  }
+}
+
 export async function getCheckInOutMessages(
   startDate?: string,
   endDate?: string
