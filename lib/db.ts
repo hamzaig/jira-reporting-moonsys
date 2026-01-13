@@ -72,44 +72,184 @@ function getPool(): mysql.Pool {
 
 // Initialize database schema
 async function initializeDatabase(): Promise<void> {
-  try {
-    const connection = await getPool().getConnection();
-    
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS slack_messages (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        message_id VARCHAR(255) UNIQUE NOT NULL,
-        channel_id VARCHAR(255) NOT NULL,
-        channel_name VARCHAR(255),
-        user_id VARCHAR(255) NOT NULL,
-        user_name VARCHAR(255),
-        message_text TEXT NOT NULL,
-        message_type ENUM('checkin', 'checkout', 'other') DEFAULT 'other',
-        timestamp VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_channel_id (channel_id),
-        INDEX idx_user_id (user_id),
-        INDEX idx_timestamp (timestamp),
-        INDEX idx_message_type (message_type)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    
-    connection.release();
-    console.log('✅ Database schema initialized');
-  } catch (error: any) {
-    // Check if it's an access denied error
-    if (error.code === 'ER_ACCESS_DENIED_ERROR') {
-      console.error('❌ MySQL Access Denied Error!');
-      console.error('💡 Solution: Grant remote access to MySQL user');
-      console.error('💡 Run this SQL command on your MySQL server:');
-      console.error('   GRANT ALL PRIVILEGES ON slack_messages.* TO \'moonsys\'@\'%\' IDENTIFIED BY \'your_password\';');
-      console.error('   FLUSH PRIVILEGES;');
-      console.error('💡 See MYSQL_ACCESS_FIX.md for detailed instructions');
+  const connection = await getPool().getConnection();
+  const tables = [
+    {
+      name: 'slack_messages',
+      sql: `
+        CREATE TABLE IF NOT EXISTS slack_messages (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          message_id VARCHAR(255) UNIQUE NOT NULL,
+          channel_id VARCHAR(255) NOT NULL,
+          channel_name VARCHAR(255),
+          user_id VARCHAR(255) NOT NULL,
+          user_name VARCHAR(255),
+          message_text TEXT NOT NULL,
+          message_type ENUM('checkin', 'checkout', 'other') DEFAULT 'other',
+          timestamp VARCHAR(255) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_channel_id (channel_id),
+          INDEX idx_user_id (user_id),
+          INDEX idx_timestamp (timestamp),
+          INDEX idx_message_type (message_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_categories',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_categories (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          slug VARCHAR(100) UNIQUE NOT NULL,
+          description TEXT,
+          color VARCHAR(7) DEFAULT '#6366f1',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_slug (slug)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'projects',
+      sql: `
+        CREATE TABLE IF NOT EXISTS projects (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          slug VARCHAR(255) UNIQUE NOT NULL,
+          description TEXT,
+          client_name VARCHAR(255),
+          client_logo_url VARCHAR(500),
+          category_id INT,
+          status ENUM('completed', 'ongoing', 'archived') DEFAULT 'completed',
+          start_date DATE,
+          end_date DATE,
+          budget DECIMAL(15, 2),
+          currency VARCHAR(10) DEFAULT 'PKR',
+          live_url VARCHAR(500),
+          github_url VARCHAR(500),
+          documentation_url VARCHAR(500),
+          featured BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_slug (slug),
+          INDEX idx_category (category_id),
+          INDEX idx_status (status),
+          INDEX idx_featured (featured)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_tags',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_tags (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          slug VARCHAR(100) UNIQUE NOT NULL,
+          color VARCHAR(7) DEFAULT '#10b981',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_slug (slug)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_tag_relations',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_tag_relations (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          tag_id INT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY unique_project_tag (project_id, tag_id),
+          INDEX idx_project (project_id),
+          INDEX idx_tag (tag_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_tech_stack',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_tech_stack (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          tech_name VARCHAR(100) NOT NULL,
+          tech_icon_url VARCHAR(500),
+          category ENUM('frontend', 'backend', 'database', 'devops', 'other') DEFAULT 'other',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_project (project_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_team_members',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_team_members (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          member_name VARCHAR(255) NOT NULL,
+          role VARCHAR(100),
+          avatar_url VARCHAR(500),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_project (project_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
+    },
+    {
+      name: 'project_files',
+      sql: `
+        CREATE TABLE IF NOT EXISTS project_files (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          file_name VARCHAR(255) NOT NULL,
+          file_url VARCHAR(500) NOT NULL,
+          file_key VARCHAR(500) NOT NULL,
+          file_type VARCHAR(100),
+          file_size INT,
+          file_category ENUM('screenshot', 'document', 'video', 'other') DEFAULT 'other',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_project (project_id),
+          INDEX idx_category (file_category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `
     }
-    console.error('❌ Error initializing database schema:', error);
-    throw error;
+  ];
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const table of tables) {
+    try {
+      await connection.query(table.sql);
+      successCount++;
+      console.log(`✅ Table '${table.name}' created/verified`);
+    } catch (error: any) {
+      errorCount++;
+      // Log but continue - some tables might already exist or have permission issues
+      if (error.code === 'ER_TABLEACCESS_DENIED_ERROR') {
+        console.warn(`⚠️ Permission denied for table '${table.name}' - may need manual creation`);
+      } else if (error.code === 'ER_TABLE_EXISTS_ERROR') {
+        console.log(`ℹ️ Table '${table.name}' already exists`);
+        successCount++; // Count as success since table exists
+        errorCount--;
+      } else {
+        console.error(`❌ Error creating table '${table.name}':`, error.message);
+      }
+    }
+  }
+
+  connection.release();
+  
+  if (successCount === tables.length) {
+    console.log(`✅ Database schema initialized successfully (${successCount} tables)`);
+  } else {
+    console.log(`⚠️ Database schema partially initialized (${successCount}/${tables.length} tables)`);
+    if (errorCount > 0) {
+      console.log(`💡 ${errorCount} table(s) had errors - check logs above`);
+    }
   }
 }
+
+// Export getPool for use by other modules
+export { getPool };
 
 export interface SlackMessage {
   id?: number;

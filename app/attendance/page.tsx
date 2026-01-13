@@ -207,6 +207,12 @@ export default function AttendancePage() {
             </div>
             <div className="flex gap-3">
               <button
+                onClick={() => router.push('/projects')}
+                className="px-4 py-2 bg-white text-moonsys-aqua-dark hover:bg-gray-50 rounded-lg transition-colors font-medium shadow-md"
+              >
+                Projects
+              </button>
+              <button
                 onClick={() => router.push('/dashboard')}
                 className="px-4 py-2 bg-white/80 hover:bg-white text-gray-900 rounded-lg transition-colors font-medium shadow-md"
               >
