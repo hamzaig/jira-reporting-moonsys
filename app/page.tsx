@@ -24,7 +24,7 @@ export default function Home() {
     // Check authentication
     const timer = setTimeout(() => {
       if (isAuthenticated()) {
-        router.push('/dashboard');
+        router.push('/dashboard/main');
       } else {
         router.push('/login');
       }

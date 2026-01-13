@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Jira Time Tracking Report",
-  description: "Track and visualize time spent on Jira tickets",
+  title: "MoonSys Business Platform",
+  description: "All-in-one business management platform - Projects, Analytics, HR, Finance & Operations",
 };
 
 export default function RootLayout({
