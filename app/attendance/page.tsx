@@ -11,6 +11,7 @@ interface AttendanceRecord {
   user_name: string;
   check_in_time: string | null;
   check_out_time: string | null;
+  checkout_next_day: boolean; // Indicates if checkout was on the next day (overnight shift)
   work_duration_hours: number;
   status: 'full_day' | 'half_day' | 'day_off' | 'incomplete' | 'missing_checkout' | 'missing_checkin';
   notes: string[];
@@ -464,7 +465,16 @@ export default function AttendancePage() {
                             {record.check_in_time || '-'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                            {record.check_out_time || '-'}
+                            {record.check_out_time ? (
+                              <span>
+                                {record.check_out_time}
+                                {record.checkout_next_day && (
+                                  <span className="ml-1 text-xs text-purple-600 dark:text-purple-400 font-medium">
+                                    (+1 day)
+                                  </span>
+                                )}
+                              </span>
+                            ) : '-'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                             {record.work_duration_hours > 0 ? `${record.work_duration_hours}h` : '-'}

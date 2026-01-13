@@ -3,6 +3,7 @@ import { getCheckInOutMessages, SlackMessage } from './db';
 const TIMEZONE = 'Asia/Karachi';
 const FULL_DAY_HOURS = 6; // 6 hours = full day
 const HALF_DAY_HOURS = 3; // Less than 6 but more than 3 = half day
+const OVERNIGHT_THRESHOLD_HOUR = 12; // Check-outs before 12:00 PM can belong to previous day's shift
 
 export interface AttendanceRecord {
   date: string;
@@ -10,6 +11,7 @@ export interface AttendanceRecord {
   user_name: string;
   check_in_time: string | null;
   check_out_time: string | null;
+  checkout_next_day: boolean; // Indicates if checkout was on the next day (overnight shift)
   work_duration_hours: number;
   status: 'full_day' | 'half_day' | 'day_off' | 'incomplete' | 'missing_checkout' | 'missing_checkin';
   notes: string[];
@@ -40,6 +42,19 @@ function getDateInKarachi(timestamp: string): string {
 }
 
 /**
+ * Get hour in Karachi timezone (0-23)
+ */
+function getHourInKarachi(timestamp: string): number {
+  const date = new Date(parseFloat(timestamp) * 1000);
+  const timeStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: TIMEZONE,
+    hour: '2-digit',
+    hour12: false
+  }).format(date);
+  return parseInt(timeStr, 10);
+}
+
+/**
  * Convert timestamp to Karachi timezone time string (HH:MM)
  */
 function getTimeInKarachi(timestamp: string): string {
@@ -64,7 +79,23 @@ function calculateHours(checkInTs: string, checkOutTs: string): number {
 }
 
 /**
+ * Get the previous date in YYYY-MM-DD format
+ */
+function getPreviousDate(dateStr: string): string {
+  const date = new Date(dateStr + 'T12:00:00');
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().split('T')[0];
+}
+
+interface WorkSession {
+  checkIn: SlackMessage;
+  checkOut: SlackMessage | null;
+  checkoutNextDay: boolean;
+}
+
+/**
  * Get attendance records for a date range
+ * Handles overnight shifts where check-out is on the next day
  */
 export async function getAttendanceRecords(
   startDate?: string,
@@ -82,135 +113,224 @@ export async function getAttendanceRecords(
     return [];
   }
   
-  // Group messages by user and date
-  const userDateMap = new Map<string, Map<string, { checkins: SlackMessage[], checkouts: SlackMessage[] }>>();
+  // Group messages by user
+  const userMessagesMap = new Map<string, { checkins: SlackMessage[], checkouts: SlackMessage[] }>();
   
   messages.forEach(message => {
-    const date = getDateInKarachi(message.timestamp);
     const userKey = message.user_id;
-    const userName = message.user_name || message.user_id;
     
-    if (!userDateMap.has(userKey)) {
-      userDateMap.set(userKey, new Map());
+    if (!userMessagesMap.has(userKey)) {
+      userMessagesMap.set(userKey, { checkins: [], checkouts: [] });
     }
     
-    const dateMap = userDateMap.get(userKey)!;
-    if (!dateMap.has(date)) {
-      dateMap.set(date, { checkins: [], checkouts: [] });
-    }
-    
-    const dayData = dateMap.get(date)!;
+    const userData = userMessagesMap.get(userKey)!;
     
     if (message.message_type === 'checkin') {
-      dayData.checkins.push(message);
+      userData.checkins.push(message);
     } else if (message.message_type === 'checkout') {
-      dayData.checkouts.push(message);
+      userData.checkouts.push(message);
     }
   });
   
-  // Convert to attendance records
+  // Convert to attendance records using session-based pairing
   const userAttendanceMap = new Map<string, UserAttendance>();
   
-  userDateMap.forEach((dateMap, userId) => {
-    const records: AttendanceRecord[] = [];
+  userMessagesMap.forEach((userData, userId) => {
+    // Sort all check-ins and check-outs by timestamp
+    userData.checkins.sort((a, b) => parseFloat(a.timestamp) - parseFloat(b.timestamp));
+    userData.checkouts.sort((a, b) => parseFloat(a.timestamp) - parseFloat(b.timestamp));
+    
+    const sessions: WorkSession[] = [];
+    const usedCheckouts = new Set<string>(); // Track which checkouts have been paired
+    
+    // For each check-in, find the matching check-out
+    userData.checkins.forEach(checkIn => {
+      const checkInTs = parseFloat(checkIn.timestamp);
+      
+      // Find the first checkout after this check-in that hasn't been used
+      let matchedCheckout: SlackMessage | null = null;
+      
+      for (const checkOut of userData.checkouts) {
+        const checkOutTs = parseFloat(checkOut.timestamp);
+        
+        // Checkout must be after check-in and not already used
+        if (checkOutTs > checkInTs && !usedCheckouts.has(checkOut.timestamp)) {
+          matchedCheckout = checkOut;
+          usedCheckouts.add(checkOut.timestamp);
+          break;
+        }
+      }
+      
+      const checkoutNextDay = matchedCheckout 
+        ? getDateInKarachi(checkIn.timestamp) !== getDateInKarachi(matchedCheckout.timestamp)
+        : false;
+      
+      sessions.push({
+        checkIn,
+        checkOut: matchedCheckout,
+        checkoutNextDay
+      });
+    });
+    
+    // Find orphan checkouts (checkouts without matching check-ins)
+    // These are early morning checkouts that might belong to a previous day's shift
+    const orphanCheckouts: SlackMessage[] = [];
+    userData.checkouts.forEach(checkOut => {
+      if (!usedCheckouts.has(checkOut.timestamp)) {
+        orphanCheckouts.push(checkOut);
+      }
+    });
+    
+    // Build attendance records from sessions
+    const recordsMap = new Map<string, AttendanceRecord>();
+    const userName = userData.checkins[0]?.user_name || userData.checkouts[0]?.user_name || userId;
+    
+    sessions.forEach(session => {
+      const date = getDateInKarachi(session.checkIn.timestamp);
+      
+      // If there's already a record for this date, we might have multiple sessions
+      // We'll take the first check-in and last check-out of the day
+      const existingRecord = recordsMap.get(date);
+      
+      if (existingRecord) {
+        // Update with this session's check-out if it's later
+        if (session.checkOut) {
+          const existingCheckoutTime = existingRecord.check_out_time;
+          const newCheckoutTime = getTimeInKarachi(session.checkOut.timestamp);
+          
+          if (!existingCheckoutTime || (session.checkoutNextDay && !existingRecord.checkout_next_day)) {
+            existingRecord.check_out_time = newCheckoutTime;
+            existingRecord.checkout_next_day = session.checkoutNextDay;
+            
+            // Recalculate work hours
+            const firstCheckIn = userData.checkins.find(c => getDateInKarachi(c.timestamp) === date);
+            if (firstCheckIn) {
+              existingRecord.work_duration_hours = calculateHours(firstCheckIn.timestamp, session.checkOut.timestamp);
+            }
+          }
+        }
+        existingRecord.notes.push('Multiple work sessions');
+      } else {
+        let workHours = 0;
+        let status: AttendanceRecord['status'] = 'missing_checkout';
+        const notes: string[] = [];
+        
+        if (session.checkOut) {
+          workHours = calculateHours(session.checkIn.timestamp, session.checkOut.timestamp);
+          
+          if (session.checkoutNextDay) {
+            notes.push(`Overnight shift (checkout next day at ${getTimeInKarachi(session.checkOut.timestamp)})`);
+          }
+          
+          if (workHours < HALF_DAY_HOURS) {
+            status = 'day_off';
+            notes.push(`Worked only ${workHours} hours`);
+          } else if (workHours < FULL_DAY_HOURS) {
+            status = 'half_day';
+            notes.push(`Worked ${workHours} hours (less than ${FULL_DAY_HOURS} hours)`);
+          } else {
+            status = 'full_day';
+            notes.push(`Worked ${workHours} hours`);
+          }
+        } else {
+          notes.push('Check-out missing but check-in recorded');
+        }
+        
+        recordsMap.set(date, {
+          date,
+          user_id: userId,
+          user_name: userName,
+          check_in_time: getTimeInKarachi(session.checkIn.timestamp),
+          check_out_time: session.checkOut ? getTimeInKarachi(session.checkOut.timestamp) : null,
+          checkout_next_day: session.checkoutNextDay,
+          work_duration_hours: workHours,
+          status,
+          notes
+        });
+      }
+    });
+    
+    // Handle orphan checkouts (early morning checkouts without matching check-in)
+    orphanCheckouts.forEach(checkOut => {
+      const checkoutDate = getDateInKarachi(checkOut.timestamp);
+      const checkoutHour = getHourInKarachi(checkOut.timestamp);
+      
+      // If checkout is before noon, it might belong to previous day's overnight shift
+      if (checkoutHour < OVERNIGHT_THRESHOLD_HOUR) {
+        const previousDate = getPreviousDate(checkoutDate);
+        const prevRecord = recordsMap.get(previousDate);
+        
+        // If there's a record from previous day with missing checkout, pair them
+        if (prevRecord && prevRecord.status === 'missing_checkout') {
+          prevRecord.check_out_time = getTimeInKarachi(checkOut.timestamp);
+          prevRecord.checkout_next_day = true;
+          
+          // Find the check-in for this record
+          const checkIn = userData.checkins.find(c => getDateInKarachi(c.timestamp) === previousDate);
+          if (checkIn) {
+            prevRecord.work_duration_hours = calculateHours(checkIn.timestamp, checkOut.timestamp);
+            
+            // Update status based on work hours
+            prevRecord.notes = [`Overnight shift (checkout next day at ${getTimeInKarachi(checkOut.timestamp)})`];
+            
+            if (prevRecord.work_duration_hours < HALF_DAY_HOURS) {
+              prevRecord.status = 'day_off';
+              prevRecord.notes.push(`Worked only ${prevRecord.work_duration_hours} hours`);
+            } else if (prevRecord.work_duration_hours < FULL_DAY_HOURS) {
+              prevRecord.status = 'half_day';
+              prevRecord.notes.push(`Worked ${prevRecord.work_duration_hours} hours (less than ${FULL_DAY_HOURS} hours)`);
+            } else {
+              prevRecord.status = 'full_day';
+              prevRecord.notes.push(`Worked ${prevRecord.work_duration_hours} hours`);
+            }
+          }
+          return; // Don't create orphan record
+        }
+      }
+      
+      // Create orphan checkout record (missing check-in)
+      if (!recordsMap.has(checkoutDate)) {
+        recordsMap.set(checkoutDate, {
+          date: checkoutDate,
+          user_id: userId,
+          user_name: userName,
+          check_in_time: null,
+          check_out_time: getTimeInKarachi(checkOut.timestamp),
+          checkout_next_day: false,
+          work_duration_hours: 0,
+          status: 'missing_checkin',
+          notes: ['Check-in missing but check-out recorded']
+        });
+      }
+    });
+    
+    // Convert to array and calculate stats
+    const records = Array.from(recordsMap.values());
     let fullDays = 0;
     let halfDays = 0;
     let daysOff = 0;
     let incompleteDays = 0;
     
-    dateMap.forEach((dayData, date) => {
-      // Sort check-ins and check-outs by time
-      dayData.checkins.sort((a, b) => parseFloat(a.timestamp) - parseFloat(b.timestamp));
-      dayData.checkouts.sort((a, b) => parseFloat(a.timestamp) - parseFloat(b.timestamp));
-      
-      const firstCheckIn = dayData.checkins[0];
-      const lastCheckOut = dayData.checkouts[dayData.checkouts.length - 1];
-      
-      let record: AttendanceRecord;
-      const userName = firstCheckIn?.user_name || lastCheckOut?.user_name || userId;
-      
-      // Edge case: No check-in but has check-out
-      if (!firstCheckIn && lastCheckOut) {
-        record = {
-          date,
-          user_id: userId,
-          user_name: userName,
-          check_in_time: null,
-          check_out_time: getTimeInKarachi(lastCheckOut.timestamp),
-          work_duration_hours: 0,
-          status: 'missing_checkin',
-          notes: ['Check-in missing but check-out recorded']
-        };
-        incompleteDays++;
-      }
-      // Edge case: Has check-in but no check-out
-      else if (firstCheckIn && !lastCheckOut) {
-        record = {
-          date,
-          user_id: userId,
-          user_name: userName,
-          check_in_time: getTimeInKarachi(firstCheckIn.timestamp),
-          check_out_time: null,
-          work_duration_hours: 0,
-          status: 'missing_checkout',
-          notes: ['Check-out missing but check-in recorded']
-        };
-        incompleteDays++;
-      }
-      // Edge case: No check-in and no check-out (day off)
-      else if (!firstCheckIn && !lastCheckOut) {
-        // This shouldn't happen as we only process check-in/check-out messages
-        // But handle it anyway
-        return;
-      }
-      // Normal case: Has both check-in and check-out
-      else {
-        const workHours = calculateHours(firstCheckIn.timestamp, lastCheckOut.timestamp);
-        
-        let status: AttendanceRecord['status'];
-        const notes: string[] = [];
-        
-        if (workHours < HALF_DAY_HOURS) {
-          status = 'day_off';
-          daysOff++;
-          notes.push(`Worked only ${workHours} hours`);
-        } else if (workHours < FULL_DAY_HOURS) {
-          status = 'half_day';
-          halfDays++;
-          notes.push(`Worked ${workHours} hours (less than ${FULL_DAY_HOURS} hours)`);
-        } else {
-          status = 'full_day';
+    records.forEach(record => {
+      switch (record.status) {
+        case 'full_day':
           fullDays++;
-          notes.push(`Worked ${workHours} hours`);
-        }
-        
-        // Check for multiple check-ins/check-outs
-        if (dayData.checkins.length > 1) {
-          notes.push(`Multiple check-ins (${dayData.checkins.length})`);
-        }
-        if (dayData.checkouts.length > 1) {
-          notes.push(`Multiple check-outs (${dayData.checkouts.length})`);
-        }
-        
-        record = {
-          date,
-          user_id: userId,
-          user_name: userName,
-          check_in_time: getTimeInKarachi(firstCheckIn.timestamp),
-          check_out_time: getTimeInKarachi(lastCheckOut.timestamp),
-          work_duration_hours: workHours,
-          status,
-          notes
-        };
+          break;
+        case 'half_day':
+          halfDays++;
+          break;
+        case 'day_off':
+          daysOff++;
+          break;
+        case 'missing_checkout':
+        case 'missing_checkin':
+          incompleteDays++;
+          break;
       }
-      
-      records.push(record);
     });
     
     // Sort records by date (newest first)
     records.sort((a, b) => b.date.localeCompare(a.date));
-    
-    const userName = records[0]?.user_name || userId;
     
     userAttendanceMap.set(userId, {
       user_id: userId,

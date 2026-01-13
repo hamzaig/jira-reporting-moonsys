@@ -408,6 +408,8 @@ export async function getCheckInOutMessages(
     const params: any[] = [];
     
     // For date filtering, convert date to timestamp
+    // IMPORTANT: We extend the endDate by 12 hours (until noon next day) 
+    // to capture overnight shift checkouts that happen early next morning
     if (startDate || endDate) {
       if (startDate) {
         const startTimestamp = new Date(startDate + 'T00:00:00+05:00').getTime() / 1000;
@@ -416,9 +418,15 @@ export async function getCheckInOutMessages(
       }
       
       if (endDate) {
-        const endTimestamp = new Date(endDate + 'T23:59:59+05:00').getTime() / 1000;
+        // Extend end date to noon of the NEXT day to capture overnight checkouts
+        // This ensures checkouts at 1-2 AM (from previous night shifts) are included
+        const endDateObj = new Date(endDate + 'T00:00:00+05:00');
+        endDateObj.setDate(endDateObj.getDate() + 1); // Add 1 day
+        endDateObj.setHours(12, 0, 0, 0); // Set to noon
+        const endTimestamp = endDateObj.getTime() / 1000;
         query += ' AND CAST(timestamp AS DECIMAL(20, 10)) <= ?';
         params.push(endTimestamp.toString());
+        console.log('📅 Extended endDate to include overnight checkouts until:', endDateObj.toISOString());
       }
     }
   
